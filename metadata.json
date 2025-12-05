@@ -1,0 +1,8 @@
+{
+  "name": "CoD Mobile Tournament Manager",
+  "description": "A gamer-themed tournament management dashboard with AI-powered player analysis, avatar generation, and ranking visualization.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
