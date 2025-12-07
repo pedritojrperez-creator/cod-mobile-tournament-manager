@@ -20,11 +20,16 @@ function App() {
   const [editPrompt, setEditPrompt] = useState('');
   const [genPrompt, setGenPrompt] = useState('');
   const [genSize, setGenSize] = useState<ImageSize>(ImageSize.SIZE_1K);
+  
+  // Edit & Database State
+  const [isDbOpen, setIsDbOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   // Score Management States
   const [scorePlayerId, setScorePlayerId] = useState<string>('');
   const [scorePoints, setScorePoints] = useState<string>('');
   const [scoreMode, setScoreMode] = useState<'add' | 'subtract'>('add');
+  const [scoreSearch, setScoreSearch] = useState(''); // Search filter for ranking dropdown
 
   // Tournament States
   const [searchTerm, setSearchTerm] = useState('');
@@ -60,12 +65,12 @@ function App() {
     localStorage.setItem('codm_players', JSON.stringify(players));
   }, [players]);
 
-  // Message Timer (10 seconds)
+  // Message Timer (5 seconds)
   useEffect(() => {
     if (message) {
       const timer = setTimeout(() => {
         setMessage(null);
-      }, 10000); // 10 seconds as requested
+      }, 5000); // 5 seconds as requested
       return () => clearTimeout(timer);
     }
   }, [message]);
@@ -94,40 +99,77 @@ function App() {
       return;
     }
 
-    if (players.length >= 30) {
+    // If we are NOT editing, check max limit
+    if (!editingId && players.length >= 30) {
       setMessage({ text: "Tournament full (30/30)", type: 'error' });
       return;
     }
 
     setIsProcessing(true);
-    // Quick AI check using Flash Lite
-    const checkJson = await quickAnalyzeText(regName);
-    const check = JSON.parse(checkJson);
-    if (check.valid === false) {
-       setMessage({ text: `Invalid Name: ${check.reason}`, type: 'error' });
-       setIsProcessing(false);
-       return;
+    
+    // Logic for Update vs Create
+    if (editingId) {
+       // Update existing
+       setPlayers(players.map(p => {
+          if (p.id === editingId) {
+             return {
+                ...p,
+                name: regName,
+                uid: regUid,
+                image: regImage || p.image // Keep old image if regImage is empty (though regImage usually populated on load)
+             };
+          }
+          return p;
+       }));
+       setMessage({ text: "Jugador actualizado con éxito", type: 'success' });
+       setEditingId(null);
+    } else {
+        // Create new
+        // Quick AI check using Flash Lite
+        const checkJson = await quickAnalyzeText(regName);
+        const check = JSON.parse(checkJson);
+        if (check.valid === false) {
+           setMessage({ text: `Invalid Name: ${check.reason}`, type: 'error' });
+           setIsProcessing(false);
+           return;
+        }
+
+        const defaultImage = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='12' cy='7' r='4'/%3E%3C/svg%3E";
+
+        const newPlayer: Player = {
+          id: Date.now().toString(),
+          name: regName,
+          uid: regUid,
+          image: regImage || defaultImage,
+          score: 0,
+          active: true
+        };
+        setPlayers([...players, newPlayer]);
+        setMessage({ text: "Registro completado con éxito", type: 'success' });
     }
 
-    const defaultImage = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='12' cy='7' r='4'/%3E%3C/svg%3E";
-
-    const newPlayer: Player = {
-      id: Date.now().toString(),
-      name: regName,
-      uid: regUid,
-      image: regImage || defaultImage,
-      score: 0,
-      active: true
-    };
-
-    setPlayers([...players, newPlayer]);
-    setMessage({ text: "Registro completado con éxito", type: 'success' });
     setRegName('');
     setRegUid('');
     setRegImage('');
     setEditPrompt('');
     setGenPrompt('');
     setIsProcessing(false);
+  };
+
+  const loadForEdit = (player: Player) => {
+     setRegName(player.name);
+     setRegUid(player.uid);
+     setRegImage(player.image);
+     setEditingId(player.id);
+     setIsDbOpen(false); // Close modal
+     setMessage({ text: `Editando a: ${player.name}`, type: 'info' });
+  };
+
+  const cancelEdit = () => {
+     setRegName('');
+     setRegUid('');
+     setRegImage('');
+     setEditingId(null);
   };
 
   const handleRemove = (id: string) => {
@@ -243,6 +285,11 @@ function App() {
   // Sort players for Ranking
   const sortedPlayers = [...players].sort((a, b) => b.score - a.score);
 
+  // Filter for Dropdown
+  const filteredForDropdown = sortedPlayers.filter(p => 
+      p.name.toLowerCase().includes(scoreSearch.toLowerCase())
+  );
+
   // -------------------------------- VIEWS --------------------------------
 
   const renderHome = () => (
@@ -293,8 +340,8 @@ function App() {
            </div>
         </div>
         
-        <h1 className="text-6xl md:text-7xl font-black text-white tracking-tighter uppercase italic drop-shadow-[0_4px_4px_rgba(0,0,0,1)] text-center leading-none">
-          Tournament <span className="text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-yellow-600">Manager</span>
+        <h1 className="text-6xl md:text-7xl font-black text-white tracking-tighter uppercase italic drop-shadow-[0_4px_4px_rgba(0,0,0,1)] text-center leading-none mt-4">
+          Xfinity-<span className="text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-yellow-600">Esports</span>
         </h1>
         <div className="h-1 w-32 bg-yellow-500 mt-6 rounded-full"></div>
       </div>
@@ -327,8 +374,21 @@ function App() {
              BACK TO HQ
           </Button>
 
-          <h2 className="text-3xl font-bold text-white mb-6 uppercase border-b border-gray-700 pb-2">
-            New Operator Registration
+          {/* Database Button */}
+          <div className="absolute top-4 left-4">
+             <button 
+                onClick={() => setIsDbOpen(true)}
+                className="flex items-center gap-2 text-cod-gold text-xs font-bold uppercase border border-cod-gold px-3 py-1 hover:bg-cod-gold hover:text-black transition-colors"
+             >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
+                </svg>
+                Base de Datos
+             </button>
+          </div>
+
+          <h2 className="text-3xl font-bold text-white mb-6 uppercase border-b border-gray-700 pb-2 mt-8 text-center">
+            {editingId ? "Editar Jugador" : "REGISTRO NUEVO JUGADOR"}
           </h2>
 
           <div className="space-y-6">
@@ -411,11 +471,71 @@ function App() {
               />
             </div>
 
-            <Button onClick={handleRegister} fullWidth disabled={isProcessing}>
-               {isProcessing ? 'PROCESSING...' : 'COMPLETE REGISTRATION'}
-            </Button>
+            <div className="flex gap-4">
+               {editingId && (
+                  <Button onClick={cancelEdit} variant="secondary" className="flex-1">
+                     CANCEL EDIT
+                  </Button>
+               )}
+               <Button onClick={handleRegister} className="flex-1" disabled={isProcessing}>
+                  {isProcessing ? 'PROCESSING...' : editingId ? 'UPDATE PLAYER' : 'COMPLETE REGISTRATION'}
+               </Button>
+            </div>
           </div>
        </div>
+
+       {/* Database Modal */}
+       {isDbOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4">
+             <div className="w-full max-w-4xl bg-cod-panel border border-cod-gold h-[80vh] flex flex-col shadow-2xl">
+                <div className="p-4 bg-black border-b border-gray-800 flex justify-between items-center">
+                   <h3 className="text-xl font-bold text-white uppercase">Player Database</h3>
+                   <button onClick={() => setIsDbOpen(false)} className="text-gray-400 hover:text-white">✕</button>
+                </div>
+                <div className="flex-1 overflow-auto p-4 custom-scrollbar">
+                   <table className="w-full text-left border-collapse">
+                      <thead>
+                         <tr className="text-gray-500 text-xs font-bold uppercase border-b border-gray-700">
+                            <th className="p-2">Avatar</th>
+                            <th className="p-2">Name</th>
+                            <th className="p-2">UID</th>
+                            <th className="p-2">Score</th>
+                            <th className="p-2">Action</th>
+                         </tr>
+                      </thead>
+                      <tbody>
+                         {players.map(player => (
+                            <tr key={player.id} className="border-b border-gray-800 hover:bg-gray-800/30">
+                               <td className="p-2">
+                                  <img src={player.image} alt="av" className="w-10 h-10 rounded-full object-cover bg-black" />
+                               </td>
+                               <td className="p-2 font-bold text-white">{player.name}</td>
+                               <td className="p-2 text-gray-400 font-mono text-sm">{player.uid}</td>
+                               <td className="p-2 text-cod-gold font-mono">{player.score}</td>
+                               <td className="p-2">
+                                  <button 
+                                    onClick={() => loadForEdit(player)}
+                                    className="p-2 bg-blue-900/50 text-blue-300 rounded hover:bg-blue-800 transition-colors"
+                                    title="Edit Player"
+                                  >
+                                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" />
+                                     </svg>
+                                  </button>
+                               </td>
+                            </tr>
+                         ))}
+                         {players.length === 0 && (
+                            <tr>
+                               <td colSpan={5} className="p-8 text-center text-gray-500">No players registered.</td>
+                            </tr>
+                         )}
+                      </tbody>
+                   </table>
+                </div>
+             </div>
+          </div>
+       )}
     </div>
   );
 
@@ -537,16 +657,25 @@ function App() {
            
            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
               <div className="md:col-span-1">
+                 <label className="block text-xs text-gray-400 font-bold mb-1">FILTER NAME</label>
+                 <input 
+                   type="text" 
+                   value={scoreSearch}
+                   onChange={(e) => setScoreSearch(e.target.value)}
+                   className="w-full bg-black border border-gray-600 text-white p-2 text-sm mb-2"
+                   placeholder="Type to find..."
+                 />
                  <label className="block text-xs text-gray-400 font-bold mb-1">SELECT PLAYER</label>
                  <select 
                    value={scorePlayerId}
                    onChange={(e) => setScorePlayerId(e.target.value)}
                    className="w-full bg-black border border-gray-600 text-white p-2 text-sm"
+                   size={5} // Show a few items since we have filtering now
                  >
-                    <option value="">-- Select --</option>
-                    {sortedPlayers.map(p => (
+                    {filteredForDropdown.map(p => (
                        <option key={p.id} value={p.id}>{p.name}</option>
                     ))}
+                    {filteredForDropdown.length === 0 && <option disabled>No matches</option>}
                  </select>
               </div>
 
@@ -592,7 +721,12 @@ function App() {
 
   const renderTournament = () => {
     const activeCount = players.filter(p => p.active).length;
-    const filteredPlayers = players.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()));
+    const totalCount = players.length;
+    // Updated Filter Logic: Search by Name OR UID
+    const filteredPlayers = players.filter(p => 
+      p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+      p.uid.toLowerCase().includes(searchTerm.toLowerCase())
+    );
 
     return (
       <div className="min-h-screen p-4 bg-black flex flex-col items-center">
@@ -601,10 +735,18 @@ function App() {
           <h2 className="text-3xl font-black text-white uppercase italic">
             Tournament <span className="text-purple-500">Setup</span>
           </h2>
-          <div className="text-right">
-             <div className="text-xs text-gray-400">PLAYERS READY</div>
-             <div className={`text-3xl font-mono font-bold ${activeCount === 20 ? 'text-green-500 animate-pulse' : activeCount > 20 ? 'text-red-500' : 'text-yellow-500'}`}>
-                {activeCount}/20
+          <div className="flex gap-8 text-right">
+             <div>
+                <div className="text-xs text-gray-400">TOTAL PLAYERS</div>
+                <div className="text-3xl font-mono font-bold text-blue-400">
+                    {totalCount}
+                </div>
+             </div>
+             <div>
+                <div className="text-xs text-gray-400">PLAYERS READY</div>
+                <div className={`text-3xl font-mono font-bold ${activeCount === 20 ? 'text-green-500 animate-pulse' : activeCount > 20 ? 'text-red-500' : 'text-yellow-500'}`}>
+                    {activeCount}/20
+                </div>
              </div>
           </div>
         </div>
@@ -614,7 +756,7 @@ function App() {
            <div className="md:col-span-2 flex gap-4">
               <input 
                 type="text" 
-                placeholder="SEARCH OPERATOR..." 
+                placeholder="BUSCAR JUGADOR (Nombre o UID)..." 
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="flex-1 bg-cod-panel border border-gray-700 p-3 text-white uppercase tracking-wider focus:border-purple-500 outline-none"
