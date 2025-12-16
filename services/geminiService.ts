@@ -2,7 +2,7 @@
 import { GoogleGenAI, GenerateContentResponse, Type } from "@google/genai";
 import { ImageSize } from "../types";
 
-const apiKey = process.env.API_KEY || '';
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
 // In a real app, we check if key exists. For this demo, we assume the environment injects it.
 const ai = new GoogleGenAI({ apiKey });
 
