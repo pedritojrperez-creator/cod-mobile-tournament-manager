@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, GenerateContentResponse, Type } from "@google/genai";
 import { ImageSize } from "../types";
 
@@ -143,4 +144,68 @@ export const editPlayerImage = async (base64Image: string, prompt: string): Prom
     console.error("Image edit error:", error);
     throw error;
   }
+};
+
+/**
+ * Analyze Match Scoreboard Screenshot
+ */
+export const analyzeMatchScreenshot = async (base64Image: string): Promise<any[]> => {
+    try {
+        const cleanBase64 = base64Image.replace(/^data:image\/(png|jpeg|jpg);base64,/, "");
+
+        const prompt = `
+        Analyze this Call of Duty Mobile match result scoreboard image strictly.
+        
+        Rules for Extraction:
+        1. Identify the match score (e.g., 5-2). The team with 5 rounds won is the WINNER. The other team is the LOSER.
+        2. Extract each player row visible.
+        3. For "kills", look for the first number in the K/D/A format (Bajas/Muertes/Asistencias).
+        4. MVP Rule: The player at the very top of the Winning team list is the Winning MVP. The player at the very top of the Losing team list is the Losing MVP.
+        5. Return a JSON array.
+
+        If a value is not clearly visible, use null or "Not detected". Do not invent data.
+
+        Response Schema:
+        Array of Objects:
+        {
+            "extractedName": string,
+            "teamResult": "WIN" or "LOSS",
+            "kills": number,
+            "isMvp": boolean
+        }
+        `;
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: {
+                parts: [
+                    { inlineData: { data: cleanBase64, mimeType: 'image/jpeg' } },
+                    { text: prompt }
+                ]
+            },
+            config: {
+                responseMimeType: 'application/json',
+                responseSchema: {
+                    type: Type.ARRAY,
+                    items: {
+                        type: Type.OBJECT,
+                        properties: {
+                            extractedName: { type: Type.STRING },
+                            teamResult: { type: Type.STRING, enum: ['WIN', 'LOSS'] },
+                            kills: { type: Type.INTEGER },
+                            isMvp: { type: Type.BOOLEAN }
+                        }
+                    }
+                }
+            }
+        });
+
+        const text = response.text;
+        if (!text) return [];
+        return JSON.parse(text);
+
+    } catch (error) {
+        console.error("Scoreboard analysis error:", error);
+        return [];
+    }
 };
