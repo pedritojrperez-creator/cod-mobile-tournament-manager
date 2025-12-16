@@ -7,6 +7,9 @@ function App() {
   const [view, setView] = useState<PageView>(PageView.HOME);
   const [players, setPlayers] = useState<Player[]>([]);
   const [message, setMessage] = useState<{ text: string, type: 'success' | 'error' | 'info' } | null>(null);
+  
+  // NEW: Global Error Message State
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // App Logo State
   const [appLogo, setAppLogo] = useState<string>('');
@@ -137,6 +140,21 @@ function App() {
     }
   }, [message]);
 
+  // --- VALIDATION HELPER ---
+  const validatePlayer = (playerName: string, uid: string): boolean => {
+    if (players.some(p => p.uid === uid)) {
+      setErrorMessage("UID repetido e inválido. No se puede registrar este jugador.");
+      return false;
+    }
+
+    if (players.some(p => p.name.toLowerCase() === playerName.toLowerCase())) {
+      setErrorMessage("Nombre de jugador repetido. Verifica que no esté ya registrado.");
+      return false;
+    }
+
+    return true;
+  };
+
   const handleAppLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -147,8 +165,8 @@ function App() {
             localStorage.setItem('codm_app_logo', result);
             setAppLogo(result);
             setMessage({ text: "Logo updated successfully", type: 'success' });
-        } catch (err) {
-            setMessage({ text: "Image too large to save", type: 'error' });
+        } catch (err: any) {
+            setErrorMessage(String(err?.message || "Image too large to save"));
         }
       };
       reader.readAsDataURL(file);
@@ -156,6 +174,8 @@ function App() {
   };
 
   const handleRegister = async () => {
+    setErrorMessage(null); // Clear previous errors
+    
     if (!regName || !regUid) {
       setMessage({ text: "Faltan datos (Name or UID)", type: 'error' });
       return;
@@ -163,63 +183,73 @@ function App() {
 
     // UPDATED LIMIT: 60 PLAYERS
     if (!editingId && players.length >= 60) {
-      setMessage({ text: "Tournament full (60/60)", type: 'error' });
+      setErrorMessage("Tournament full (60/60)");
       return;
+    }
+    
+    // Duplicate Validation for New Players
+    if (!editingId) {
+        if (!validatePlayer(regName, regUid)) return;
     }
 
     setIsProcessing(true);
     
-    if (editingId) {
-       // Update existing
-       setPlayers(players.map(p => {
-          if (p.id === editingId) {
-             return {
-                ...p,
-                name: regName,
-                uid: regUid,
-                image: regImage || p.image 
-             };
-          }
-          return p;
-       }));
-       setMessage({ text: "Jugador actualizado con éxito", type: 'success' });
-       setEditingId(null);
-    } else {
-        // Create new
-        const checkJson = await quickAnalyzeText(regName);
-        const check = JSON.parse(checkJson);
-        if (check.valid === false) {
-           setMessage({ text: `Invalid Name: ${check.reason}`, type: 'error' });
-           setIsProcessing(false);
-           return;
+    try {
+        if (editingId) {
+           // Update existing
+           setPlayers(players.map(p => {
+              if (p.id === editingId) {
+                 return {
+                    ...p,
+                    name: regName,
+                    uid: regUid,
+                    image: regImage || p.image 
+                 };
+              }
+              return p;
+           }));
+           setMessage({ text: "Jugador actualizado con éxito", type: 'success' });
+           setEditingId(null);
+        } else {
+            // Create new
+            const checkJson = await quickAnalyzeText(regName);
+            const check = JSON.parse(checkJson);
+            if (check.valid === false) {
+               setErrorMessage(`Invalid Name: ${check.reason}`);
+               setIsProcessing(false);
+               return;
+            }
+
+            const defaultImage = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='12' cy='7' r='4'/%3E%3C/svg%3E";
+
+            const newPlayer: Player = {
+              id: Date.now().toString(),
+              name: regName,
+              uid: regUid,
+              image: regImage || defaultImage,
+              score: 0,
+              active: true
+            };
+            setPlayers([...players, newPlayer]);
+            setMessage({ text: "Registro completado con éxito", type: 'success' });
         }
 
-        const defaultImage = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='12' cy='7' r='4'/%3E%3C/svg%3E";
-
-        const newPlayer: Player = {
-          id: Date.now().toString(),
-          name: regName,
-          uid: regUid,
-          image: regImage || defaultImage,
-          score: 0,
-          active: true
-        };
-        setPlayers([...players, newPlayer]);
-        setMessage({ text: "Registro completado con éxito", type: 'success' });
+        setRegName('');
+        setRegUid('');
+        setRegImage('');
+        setEditPrompt('');
+        setGenPrompt('');
+    } catch (err: any) {
+        setErrorMessage(String(err?.message || err));
+    } finally {
+        setIsProcessing(false);
     }
-
-    setRegName('');
-    setRegUid('');
-    setRegImage('');
-    setEditPrompt('');
-    setGenPrompt('');
-    setIsProcessing(false);
   };
 
   // --- INDEPENDENT REGISTRATION FOR VS RANDOM ---
   const handleAddRandomPlayer = () => {
       if(!rndName.trim()) {
-          setMessage({ text: "Ingresa un nombre para el jugador", type: 'error' });
+          setErrorMessage("Ingresa un nombre para el jugador");
           return;
       }
       
@@ -282,9 +312,14 @@ function App() {
   const handleAnalyzeImage = async () => {
     if (!regImage) return;
     setIsProcessing(true);
-    const result = await analyzePlayerImage(regImage.split(',')[1]);
-    alert(result); 
-    setIsProcessing(false);
+    try {
+        const result = await analyzePlayerImage(regImage.split(',')[1]);
+        alert(result); 
+    } catch(err: any) {
+        setErrorMessage(String(err?.message || err));
+    } finally {
+        setIsProcessing(false);
+    }
   };
 
   const handleGenerateAvatar = async () => {
@@ -293,10 +328,11 @@ function App() {
     try {
       const img = await generateAvatar(genPrompt, genSize);
       if (img) setRegImage(img);
-    } catch (e) {
-      setMessage({ text: "Generation failed", type: 'error' });
+    } catch (e: any) {
+      setErrorMessage(String(e?.message || "Generation failed"));
+    } finally {
+        setIsProcessing(false);
     }
-    setIsProcessing(false);
   };
 
   const handleEditAvatar = async () => {
@@ -305,15 +341,16 @@ function App() {
     try {
       const img = await editPlayerImage(regImage, editPrompt);
       if (img) setRegImage(img);
-    } catch (e) {
-      setMessage({ text: "Edit failed", type: 'error' });
+    } catch (e: any) {
+      setErrorMessage(String(e?.message || "Edit failed"));
+    } finally {
+        setIsProcessing(false);
     }
-    setIsProcessing(false);
   };
 
   const handleUpdateScore = () => {
     if (!scorePlayerId || !scorePoints) {
-       setMessage({ text: "Selecciona un jugador y puntos", type: 'error' });
+       setErrorMessage("Selecciona un jugador y puntos");
        return;
     }
     const points = parseInt(scorePoints);
@@ -339,7 +376,7 @@ function App() {
   // --- HISTORY & RESET LOGIC ---
   const handleArchiveSeason = () => {
       if (players.length === 0) {
-          setMessage({ text: "No players to archive.", type: 'error' });
+          setErrorMessage("No players to archive.");
           return;
       }
       const now = new Date();
@@ -387,6 +424,7 @@ function App() {
       const reader = new FileReader();
       reader.onloadend = async () => {
           setIsScanning(true);
+          setErrorMessage(null);
           const base64 = reader.result as string;
           
           try {
@@ -411,8 +449,8 @@ function App() {
                   };
               });
               setScannedData(calculateScannedPoints(processed));
-          } catch (error) {
-              setMessage({ text: "Error analizando la imagen.", type: 'error' });
+          } catch (error: any) {
+              setErrorMessage(String(error?.message || "Error analizando la imagen."));
           } finally {
               setIsScanning(false);
           }
@@ -473,34 +511,42 @@ function App() {
   };
 
   const saveQuickRegister = () => {
+      setErrorMessage(null);
       if (!quickReg) return;
       
-      if (!quickReg.name.trim()) {
-          alert("El nombre es requerido");
-          return;
+      try {
+          if (!quickReg.name.trim()) {
+              setErrorMessage("El nombre es requerido");
+              return;
+          }
+
+          // DUPLICATE VALIDATION
+          if (!validatePlayer(quickReg.name, quickReg.uid)) return;
+
+          const defaultImage = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='12' cy='7' r='4'/%3E%3C/svg%3E";
+          const newId = Date.now().toString();
+
+          const newPlayer: Player = {
+              id: newId,
+              name: quickReg.name,
+              uid: quickReg.uid,
+              image: defaultImage,
+              score: 0,
+              active: true
+          };
+
+          // 1. Add to main DB
+          setPlayers(prev => [...prev, newPlayer]);
+
+          // 2. Link to Scanned Row
+          updateScannedRow(quickReg.tempId, 'matchedPlayerId', newId);
+
+          // 3. Close
+          setQuickReg(null);
+          setMessage({ text: `Jugador ${quickReg.name} registrado y vinculado.`, type: 'success' });
+      } catch (err: any) {
+          setErrorMessage(String(err?.message || err));
       }
-
-      const defaultImage = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='12' cy='7' r='4'/%3E%3C/svg%3E";
-      const newId = Date.now().toString();
-
-      const newPlayer: Player = {
-          id: newId,
-          name: quickReg.name,
-          uid: quickReg.uid,
-          image: defaultImage,
-          score: 0,
-          active: true
-      };
-
-      // 1. Add to main DB
-      setPlayers(prev => [...prev, newPlayer]);
-
-      // 2. Link to Scanned Row
-      updateScannedRow(quickReg.tempId, 'matchedPlayerId', newId);
-
-      // 3. Close
-      setQuickReg(null);
-      setMessage({ text: `Jugador ${quickReg.name} registrado y vinculado.`, type: 'success' });
   };
 
   // -------------------------
@@ -620,7 +666,7 @@ function App() {
         const activePlayers = players.filter(p => p.active);
         const result = generateBalancedBracket(activePlayers);
         if (!result) {
-            setMessage({ text: "Need at least 2 players for VS Mode", type: 'error' });
+            setErrorMessage("Need at least 2 players for VS Mode");
             return;
         }
         setVsMatches(result.bracket);
@@ -642,7 +688,7 @@ function App() {
     if (tournamentMode === 'VS_RANDOM') {
         const result = generateBalancedBracket(randomPlayers); // Use all random players
         if (!result) {
-            setMessage({ text: "Need at least 2 players in Random List", type: 'error' });
+            setErrorMessage("Need at least 2 players in Random List");
             return;
         }
         setRndVsMatches(result.bracket);
@@ -657,11 +703,11 @@ function App() {
     const requiredPlayers = tournamentMode === 'STANDARD' ? 20 : 10;
     
     if (activePlayers.length > requiredPlayers) {
-      setMessage({ text: `Excede el número máximo de jugadores (Max ${requiredPlayers})`, type: 'error' });
+      setErrorMessage(`Excede el número máximo de jugadores (Max ${requiredPlayers})`);
       return;
     }
     if (activePlayers.length < requiredPlayers) {
-      setMessage({ text: `Insuficientes jugadores habilitados (${activePlayers.length}/${requiredPlayers})`, type: 'error' });
+      setErrorMessage(`Insuficientes jugadores habilitados (${activePlayers.length}/${requiredPlayers})`);
       return;
     }
 
@@ -1225,6 +1271,19 @@ function App() {
                          )}
                      </div>
 
+                     {/* Footer Actions */}
+                     <div className="p-4 bg-black border-t border-purple-900 flex justify-between items-center">
+                         <Button variant="ghost" onClick={() => {setIsScannerOpen(false); setScannedData([]);}}>CANCEL</Button>
+                         {scannedData.length > 0 && (
+                             <div className="flex gap-4">
+                                <Button variant="secondary" onClick={() => setScannedData([])}>CLEAR ALL</Button>
+                                <Button onClick={handleCommitScannedPoints} className="bg-green-600 hover:bg-green-500 border-green-500 text-white">
+                                    CARGAR DATOS
+                                </Button>
+                             </div>
+                         )}
+                     </div>
+
                      {/* --- QUICK REGISTER OVERLAY MODAL --- */}
                      {quickReg && (
                         <div className="absolute inset-0 bg-black/80 flex items-center justify-center z-[60]">
@@ -1344,468 +1403,443 @@ function App() {
     );
   };
 
-  const renderTournament = () => {
-    const activeCount = players.filter(p => p.active).length;
-    const totalCount = players.length;
-    const filteredPlayers = players.filter(p => 
-      p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-      p.uid.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+  const renderTournament = () => (
+    <div className="min-h-screen p-4 md:p-10 flex flex-col items-center">
+       <div className="w-full max-w-4xl bg-cod-panel border border-teal-500 p-8 shadow-[0_0_30px_rgba(45,212,191,0.2)]">
+          <div className="flex justify-between items-center mb-6 border-b border-teal-900 pb-4">
+              <h2 className="text-3xl font-bold text-teal-400 uppercase tracking-widest">Tournament Setup</h2>
+              <Button variant="ghost" onClick={() => setView(PageView.HOME)}>EXIT</Button>
+          </div>
 
-    const requiredPlayers = tournamentMode === 'STANDARD' ? 20 : (tournamentMode === 'DUEL' ? 10 : 2);
-    const isRandomMode = tournamentMode === 'VS_RANDOM';
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+             <div>
+                <label className="block text-teal-500 text-xs font-bold uppercase mb-2">Select Mode</label>
+                <div className="space-y-2">
+                   <div onClick={() => setTournamentMode('STANDARD')} className={`p-3 border cursor-pointer transition-all ${tournamentMode === 'STANDARD' ? 'bg-teal-900/50 border-teal-400 text-white' : 'border-gray-700 text-gray-400 hover:border-gray-500'}`}>
+                      <div className="font-bold">STANDARD SQUAD (20P)</div>
+                      <div className="text-xs">4 Teams of 5. Single Elimination.</div>
+                   </div>
+                   <div onClick={() => setTournamentMode('DUEL')} className={`p-3 border cursor-pointer transition-all ${tournamentMode === 'DUEL' ? 'bg-teal-900/50 border-teal-400 text-white' : 'border-gray-700 text-gray-400 hover:border-gray-500'}`}>
+                      <div className="font-bold">DUEL (10P)</div>
+                      <div className="text-xs">2 Teams of 5. Best of 3 Matches.</div>
+                   </div>
+                   <div onClick={() => setTournamentMode('VS')} className={`p-3 border cursor-pointer transition-all ${tournamentMode === 'VS' ? 'bg-teal-900/50 border-teal-400 text-white' : 'border-gray-700 text-gray-400 hover:border-gray-500'}`}>
+                      <div className="font-bold">1v1 RANKED</div>
+                      <div className="text-xs">Dynamic Bracket using Main Database.</div>
+                   </div>
+                   <div onClick={() => setTournamentMode('VS_RANDOM')} className={`p-3 border cursor-pointer transition-all ${tournamentMode === 'VS_RANDOM' ? 'bg-teal-900/50 border-teal-400 text-white' : 'border-gray-700 text-gray-400 hover:border-gray-500'}`}>
+                      <div className="font-bold">1v1 QUICK PLAY</div>
+                      <div className="text-xs">Independent List. Random Names.</div>
+                   </div>
+                </div>
+             </div>
 
-    return (
-      <div className="min-h-screen p-4 bg-black flex flex-col items-center">
-        <div className="w-full max-w-5xl mb-6 flex justify-between items-center border-b border-purple-800 pb-4">
-          <Button variant="ghost" onClick={() => setView(PageView.HOME)}>← HOME</Button>
-          <h2 className="text-3xl font-black text-white uppercase italic">
-            Tournament <span className="text-purple-500">Setup</span>
-          </h2>
-          {!isRandomMode && (
-              <div className="flex gap-8 text-right">
-                 <div>
-                    <div className="text-xs text-gray-400">TOTAL PLAYERS</div>
-                    <div className="text-3xl font-mono font-bold text-blue-400">{totalCount}</div>
-                 </div>
-                 <div>
-                    <div className="text-xs text-gray-400">PLAYERS READY</div>
-                    <div className={`text-3xl font-mono font-bold ${activeCount >= requiredPlayers ? 'text-green-500 animate-pulse' : 'text-yellow-500'}`}>
-                        {activeCount}/{tournamentMode === 'VS' ? 'Any (>1)' : requiredPlayers}
+             <div className="bg-black/40 p-4 border border-gray-700">
+                 {tournamentMode === 'STANDARD' && (
+                    <div className="text-sm text-gray-300">
+                       Requires exactly <span className="text-teal-400 font-bold">20 active players</span> in the main database.
+                       <br/><br/>
+                       System will randomly assign 4 teams: Alpha, Bravo, Delta, Omega.
                     </div>
-                 </div>
-              </div>
-          )}
-        </div>
-
-        {/* Controls */}
-        <div className="w-full max-w-5xl grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-           <div className="md:col-span-2 space-y-4">
-              {!isRandomMode && (
-                  <div className="flex gap-4">
-                      <input type="text" placeholder="BUSCAR JUGADOR (Nombre o UID)..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="flex-1 bg-cod-panel border border-gray-700 p-3 text-white uppercase tracking-wider focus:border-purple-500 outline-none"/>
-                  </div>
-              )}
-              <div className="flex gap-2 items-center flex-wrap">
-                 <span className="text-xs font-bold text-gray-500 uppercase">Mode:</span>
-                 <button onClick={() => setTournamentMode('STANDARD')} className={`px-2 py-2 border text-xs font-bold uppercase transition-colors ${tournamentMode === 'STANDARD' ? 'bg-purple-900 border-purple-500 text-white' : 'border-gray-700 text-gray-500 hover:text-white'}`}>
-                   Team (20P)
-                 </button>
-                 <button onClick={() => setTournamentMode('DUEL')} className={`px-2 py-2 border text-xs font-bold uppercase transition-colors ${tournamentMode === 'DUEL' ? 'bg-blue-900 border-blue-500 text-white' : 'border-gray-700 text-gray-500 hover:text-white'}`}>
-                   Team (10P)
-                 </button>
-                 <button onClick={() => setTournamentMode('VS')} className={`px-2 py-2 border text-xs font-bold uppercase transition-colors ${tournamentMode === 'VS' ? 'bg-orange-900 border-orange-500 text-white' : 'border-gray-700 text-gray-500 hover:text-white'}`}>
-                   VS X8
-                 </button>
-                 <button onClick={() => setTournamentMode('VS_RANDOM')} className={`px-2 py-2 border text-xs font-bold uppercase transition-colors ${tournamentMode === 'VS_RANDOM' ? 'bg-cyan-900 border-cyan-500 text-white' : 'border-gray-700 text-gray-500 hover:text-white'}`}>
-                   VS RndmPlayers
-                 </button>
-              </div>
-           </div>
-           <div>
-              <Button onClick={handleRandomTeams} fullWidth className="h-full bg-purple-700 hover:bg-purple-600 border border-purple-500">
-                 {tournamentMode === 'VS' || tournamentMode === 'VS_RANDOM' ? 'GENERATE BRACKET' : 'RANDOM TEAMS'}
-              </Button>
-           </div>
-        </div>
-
-        {/* --- MAIN PLAYER LIST --- */}
-        {!isRandomMode && (
-            <div className="w-full max-w-5xl bg-cod-panel border border-gray-800 rounded h-96 overflow-y-auto mb-8 custom-scrollbar">
-               <table className="w-full text-left border-collapse">
-                  <thead className="bg-black sticky top-0 z-10">
-                     <tr>
-                        <th className="p-4 text-gray-500 text-xs font-bold uppercase">Status</th>
-                        <th className="p-4 text-gray-500 text-xs font-bold uppercase">Avatar</th>
-                        <th className="p-4 text-gray-500 text-xs font-bold uppercase">Name</th>
-                        <th className="p-4 text-gray-500 text-xs font-bold uppercase">UID</th>
-                     </tr>
-                  </thead>
-                  <tbody>
-                     {filteredPlayers.map(player => (
-                        <tr key={player.id} className={`border-b border-gray-800 transition-colors ${player.active ? 'bg-gray-900/50' : 'bg-black opacity-40 grayscale'}`}>
-                           <td className="p-4">
-                              <button onClick={() => togglePlayerActive(player.id)} className={`w-12 h-6 rounded-full p-1 transition-colors ${player.active ? 'bg-green-600' : 'bg-red-900'}`}>
-                                 <div className={`w-4 h-4 rounded-full bg-white shadow-md transform transition-transform ${player.active ? 'translate-x-6' : 'translate-x-0'}`}></div>
-                              </button>
-                           </td>
-                           <td className="p-4">
-                              <img src={player.image} alt="av" className="w-10 h-10 rounded-full border border-gray-600" />
-                           </td>
-                           <td className="p-4 font-bold text-white uppercase">{player.name}</td>
-                           <td className="p-4 font-mono text-gray-400 text-sm">{player.uid}</td>
-                        </tr>
-                     ))}
-                  </tbody>
-               </table>
-            </div>
-        )}
-
-        {/* --- INDEPENDENT RANDOM PLAYERS UI --- */}
-        {isRandomMode && (
-            <div className="w-full max-w-5xl bg-cyan-950/20 border border-cyan-800 p-6 rounded mb-8 animate-fade-in">
-                 <h3 className="text-cyan-400 font-bold uppercase mb-4 text-xl">Independent VS Registration</h3>
-                 <div className="flex gap-4 mb-6">
-                      <input 
-                         type="text" 
-                         value={rndName}
-                         onChange={(e) => setRndName(e.target.value)}
-                         onKeyDown={(e) => e.key === 'Enter' && handleAddRandomPlayer()}
-                         placeholder="Enter Player Name..."
-                         className="flex-1 bg-black border border-cyan-700 text-white px-4 py-2 outline-none focus:border-cyan-400"
-                      />
-                      <button onClick={handleAddRandomPlayer} className="bg-cyan-600 hover:bg-cyan-500 text-black font-bold px-6 uppercase">ADD</button>
-                 </div>
-
-                 <div className="h-64 overflow-y-auto custom-scrollbar border-t border-cyan-900 bg-black/50">
-                     {randomPlayers.length === 0 && <div className="p-4 text-gray-500 italic">No independent players added yet.</div>}
-                     {randomPlayers.map(p => (
-                         <div key={p.id} className="flex items-center justify-between p-3 border-b border-gray-800 hover:bg-gray-800">
-                              <div className="flex items-center gap-3">
-                                  <img src={p.image} className="w-8 h-8 rounded-full border border-cyan-500" />
-                                  <span className="font-bold text-white">{p.name}</span>
-                              </div>
-                              <button onClick={() => handleRemoveRandomPlayer(p.id)} className="text-red-500 hover:text-red-300 text-xs uppercase font-bold">Remove</button>
-                         </div>
-                     ))}
-                 </div>
-                 <div className="mt-2 text-right text-xs text-cyan-600">Total: {randomPlayers.length} Players</div>
-            </div>
-        )}
-
-        {/* Generated Teams Preview (Only Standard/Duel) */}
-        {teams.length > 0 && !isRandomMode && tournamentMode !== 'VS' && (
-           <div className="w-full max-w-5xl animate-fade-in">
-              <h3 className="text-xl font-bold text-white mb-4 uppercase">Squad Preview</h3>
-              <div className={`grid grid-cols-1 ${teams.length === 2 ? 'md:grid-cols-2' : 'md:grid-cols-2 lg:grid-cols-4'} gap-4`}>
-                 {teams.map((team, idx) => (
-                    <div key={team.id} className={`p-4 border-t-4 ${team.color.replace('bg-', 'border-')} bg-cod-panel`}>
-                       <input value={team.name} onChange={(e) => updateTeamName(team.id, e.target.value)} className="bg-transparent text-white font-black uppercase text-lg w-full mb-2 outline-none border-b border-transparent focus:border-white"/>
-                       <div className="space-y-1">
-                          {team.members.map(m => (
-                             <div key={m.id} className="text-xs text-gray-400 flex items-center gap-2">
-                                <span className={`w-2 h-2 rounded-full ${team.color}`}></span>{m.name}
+                 )}
+                 {tournamentMode === 'DUEL' && (
+                    <div className="text-sm text-gray-300">
+                       Requires exactly <span className="text-teal-400 font-bold">10 active players</span> in the main database.
+                       <br/><br/>
+                       System will randomly assign 2 teams: Alpha, Bravo.
+                    </div>
+                 )}
+                 {tournamentMode === 'VS' && (
+                    <div className="text-sm text-gray-300">
+                       Uses all <span className="text-teal-400 font-bold">Active Players</span> from main database.
+                       <br/><br/>
+                       Current Active: {players.filter(p => p.active).length}
+                       <br/>
+                       <div className="max-h-40 overflow-y-auto mt-2 border-t border-gray-700 pt-2 custom-scrollbar">
+                          {players.map(p => (
+                             <div key={p.id} className="flex justify-between items-center py-1 text-xs">
+                                <span className={p.active ? 'text-white' : 'text-gray-600'}>{p.name}</span>
+                                <button onClick={() => togglePlayerActive(p.id)} className={`px-2 rounded ${p.active ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'}`}>
+                                   {p.active ? 'IN' : 'OUT'}
+                                </button>
                              </div>
                           ))}
                        </div>
                     </div>
-                 ))}
-              </div>
-              <div className="mt-8 flex justify-center">
-                 <Button onClick={() => setView(PageView.BRACKET)} className="w-64 py-4 text-xl">FLUJO (BRACKET)</Button>
-              </div>
-           </div>
-        )}
-        
-        {/* Generated VS Bracket Preview Link (VS Main) */}
-        {tournamentMode === 'VS' && vsMatches.length > 0 && (
-             <div className="w-full max-w-5xl animate-fade-in mt-8 flex justify-center">
-                 <Button onClick={() => setView(PageView.BRACKET)} className="w-64 py-4 text-xl bg-orange-600 hover:bg-orange-500 border border-orange-400">START VS BRACKET</Button>
-             </div>
-        )}
-
-        {/* Generated VS Bracket Preview Link (VS Random) */}
-        {tournamentMode === 'VS_RANDOM' && rndVsMatches.length > 0 && (
-             <div className="w-full max-w-5xl animate-fade-in mt-8 flex justify-center">
-                 <Button onClick={() => setView(PageView.BRACKET)} className="w-64 py-4 text-xl bg-cyan-600 hover:bg-cyan-500 border border-cyan-400 text-black">START RNDM BRACKET</Button>
-             </div>
-        )}
-
-      </div>
-    );
-  };
-
-  const renderBracket = () => {
-    // Helper for popup
-    const showTeamInfo = (team: Team) => {
-      setSelectedTeamInfo(team);
-    };
-
-    const bo3Champion = getBo3Champion();
-    const isRandomMode = tournamentMode === 'VS_RANDOM';
-    
-    // Determine Champion for VS modes
-    const currentVsMatches = isRandomMode ? rndVsMatches : vsMatches;
-    const vsChampion = currentVsMatches.length > 0 && currentVsMatches[currentVsMatches.length - 1][0].winner ? currentVsMatches[currentVsMatches.length - 1][0].winner : null;
-
-    return (
-      <div className="min-h-screen bg-black flex flex-col relative overflow-hidden">
-        {/* Navigation & Reset Header */}
-        <div className="absolute top-4 left-0 right-0 z-40 px-6 flex justify-between items-start pointer-events-none">
-           <div className="pointer-events-auto flex gap-2">
-              <Button variant="secondary" onClick={() => setView(PageView.TOURNAMENT)} className="flex items-center gap-2">
-                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
-                 </svg>
-                 BACK TO SETUP
-              </Button>
-              {(tournamentMode === 'STANDARD' || tournamentMode === 'DUEL') && (
-                  <Button variant="ghost" onClick={() => setView(PageView.RANKING)} className="flex items-center gap-2 bg-yellow-900/30 border border-yellow-700 text-yellow-500 hover:text-white">
-                      GO TO RANKING
-                  </Button>
-              )}
-           </div>
-           
-           <div className="pointer-events-auto">
-              <button 
-                 onClick={handleResetBracket}
-                 className="group flex flex-col items-center justify-center bg-gray-900 border border-gray-700 text-gray-400 hover:text-white w-16 h-16 rounded-full hover:border-red-500 transition-all shadow-lg"
-                 title="Reset Bracket Progress"
-              >
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 group-hover:rotate-180 transition-transform duration-500">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
-                  </svg>
-                  <span className="text-[10px] font-bold uppercase mt-1">Reset</span>
-              </button>
-           </div>
-        </div>
-
-        {/* Info Modal */}
-        {selectedTeamInfo && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 animate-fade-in">
-             <div className={`p-6 bg-cod-panel border-2 ${selectedTeamInfo.color.replace('bg-', 'border-') + ' bg-black'} max-w-sm w-full shadow-2xl`}>
-                <h3 className="text-2xl font-black text-white uppercase mb-4">{selectedTeamInfo.name}</h3>
-                <div className="space-y-2 mb-6">
-                   {selectedTeamInfo.members.map(m => (
-                      <div key={m.id} className="flex items-center gap-3 p-2 bg-black/50 rounded">
-                         <img src={m.image} className="w-8 h-8 rounded-full" />
-                         <span className="font-bold text-gray-300 uppercase">{m.name}</span>
-                      </div>
-                   ))}
-                </div>
-                <Button fullWidth onClick={() => setSelectedTeamInfo(null)}>CLOSE INFO</Button>
+                 )}
+                 {tournamentMode === 'VS_RANDOM' && (
+                    <div className="text-sm text-gray-300">
+                       <p className="mb-2">Add names for a quick tournament (Independent DB).</p>
+                       <div className="flex gap-2 mb-2">
+                          <input 
+                             type="text" 
+                             value={rndName} 
+                             onChange={(e) => setRndName(e.target.value)} 
+                             className="flex-1 bg-black border border-gray-600 px-2 py-1 text-white"
+                             placeholder="Player Name"
+                             onKeyDown={(e) => e.key === 'Enter' && handleAddRandomPlayer()}
+                          />
+                          <button onClick={handleAddRandomPlayer} className="bg-teal-600 text-white px-3 font-bold">+</button>
+                       </div>
+                       <div className="max-h-40 overflow-y-auto border border-gray-800 bg-black p-2 custom-scrollbar">
+                           {randomPlayers.length === 0 && <span className="text-gray-600 italic">No players added.</span>}
+                           {randomPlayers.map(p => (
+                               <div key={p.id} className="flex justify-between items-center py-1 border-b border-gray-800 last:border-0">
+                                  <span>{p.name}</span>
+                                  <button onClick={() => handleRemoveRandomPlayer(p.id)} className="text-red-500 hover:text-white">×</button>
+                               </div>
+                           ))}
+                       </div>
+                    </div>
+                 )}
              </div>
           </div>
-        )}
 
-        {/* Bracket Content - Conditional Render based on mode */}
-        <div className="flex-1 flex flex-col justify-center items-center p-4 md:p-10 relative mt-16">
-           
-           {/* STANDARD MODE (4 Teams Bracket) */}
-           {tournamentMode === 'STANDARD' && (
-             <>
-                {/* Connecting Lines (Simplified visual) */}
-               <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-30">
-                  <path d="M 20% 25% L 40% 25% L 40% 45% L 50% 45%" stroke="white" strokeWidth="2" fill="none" />
-                  <path d="M 20% 75% L 40% 75% L 40% 55% L 50% 55%" stroke="white" strokeWidth="2" fill="none" />
-                  <path d="M 80% 25% L 60% 25% L 60% 45% L 50% 45%" stroke="white" strokeWidth="2" fill="none" />
-                  <path d="M 80% 75% L 60% 75% L 60% 55% L 50% 55%" stroke="white" strokeWidth="2" fill="none" />
-               </svg>
+          <div className="mt-8 pt-6 border-t border-teal-900 flex gap-4">
+             <Button 
+                onClick={() => { handleRandomTeams(); setView(PageView.BRACKET); }} 
+                fullWidth 
+                className="bg-teal-600 hover:bg-teal-500 text-black border-none shadow-[0_0_15px_rgba(45,212,191,0.4)]"
+             >
+                GENERATE & START
+             </Button>
+          </div>
+       </div>
+    </div>
+  );
 
-               {/* Team 1 (Top Left) */}
-               <div className="absolute top-10 left-4 md:left-20 w-48 md:w-64">
-                  <div className={`p-4 ${teams[0]?.color} shadow-[0_0_15px_rgba(255,255,255,0.2)] relative group`}>
-                     <h4 className="font-black text-white uppercase text-lg">{teams[0]?.name}</h4>
-                     <button onClick={() => showTeamInfo(teams[0])} className="absolute top-2 right-2 w-5 h-5 bg-black/50 text-xs flex items-center justify-center rounded hover:bg-black text-white">i</button>
-                  </div>
-                  <button onClick={() => advanceTeam(teams[0], 'semi1')} className="mt-2 w-full bg-gray-800 text-xs py-1 hover:bg-green-700 uppercase font-bold text-gray-400 hover:text-white transition-colors">
-                     WINNER
-                  </button>
-               </div>
-
-               {/* Team 2 (Bottom Left) */}
-               <div className="absolute bottom-10 left-4 md:left-20 w-48 md:w-64">
-                  <div className={`p-4 ${teams[1]?.color} shadow-[0_0_15px_rgba(255,255,255,0.2)] relative`}>
-                     <h4 className="font-black text-white uppercase text-lg">{teams[1]?.name}</h4>
-                     <button onClick={() => showTeamInfo(teams[1])} className="absolute top-2 right-2 w-5 h-5 bg-black/50 text-xs flex items-center justify-center rounded hover:bg-black text-white">i</button>
-                  </div>
-                  <button onClick={() => advanceTeam(teams[1], 'semi1')} className="mt-2 w-full bg-gray-800 text-xs py-1 hover:bg-green-700 uppercase font-bold text-gray-400 hover:text-white transition-colors">
-                     WINNER
-                  </button>
-               </div>
-
-               {/* Team 3 (Top Right) */}
-               <div className="absolute top-10 right-4 md:right-20 w-48 md:w-64 text-right">
-                  <div className={`p-4 ${teams[2]?.color} shadow-[0_0_15px_rgba(255,255,255,0.2)] relative`}>
-                     <h4 className="font-black text-white uppercase text-lg">{teams[2]?.name}</h4>
-                     <button onClick={() => showTeamInfo(teams[2])} className="absolute top-2 left-2 w-5 h-5 bg-black/50 text-xs flex items-center justify-center rounded hover:bg-black text-white">i</button>
-                  </div>
-                  <button onClick={() => advanceTeam(teams[2], 'semi2')} className="mt-2 w-full bg-gray-800 text-xs py-1 hover:bg-green-700 uppercase font-bold text-gray-400 hover:text-white transition-colors">
-                     WINNER
-                  </button>
-               </div>
-
-               {/* Team 4 (Bottom Right) */}
-               <div className="absolute bottom-10 right-4 md:right-20 w-48 md:w-64 text-right">
-                  <div className={`p-4 ${teams[3]?.color} shadow-[0_0_15px_rgba(255,255,255,0.2)] relative`}>
-                     <h4 className="font-black text-white uppercase text-lg">{teams[3]?.name}</h4>
-                     <button onClick={() => showTeamInfo(teams[3])} className="absolute top-2 left-2 w-5 h-5 bg-black/50 text-xs flex items-center justify-center rounded hover:bg-black text-white">i</button>
-                  </div>
-                  <button onClick={() => advanceTeam(teams[3], 'semi2')} className="mt-2 w-full bg-gray-800 text-xs py-1 hover:bg-green-700 uppercase font-bold text-gray-400 hover:text-white transition-colors">
-                     WINNER
-                  </button>
-               </div>
-
-               {/* FINALISTS - CENTER */}
-               <div className="flex gap-10 items-center">
-                  <div className="flex flex-col items-center gap-4">
-                     <div className={`w-56 h-32 flex items-center justify-center border-4 ${bracketState.semi1Winner ? bracketState.semi1Winner.color.replace('bg-', 'border-') + ' bg-black' : 'border-gray-800 bg-gray-900'} relative`}>
-                        {bracketState.semi1Winner ? (
-                           <span className="text-2xl font-black uppercase text-center text-white">{bracketState.semi1Winner.name}</span>
-                        ) : (
-                           <span className="text-gray-600 font-mono">TBD</span>
-                        )}
-                     </div>
-                     {bracketState.semi1Winner && (
-                        <Button onClick={() => advanceTeam(bracketState.semi1Winner!, 'final')} className="text-xs py-1 px-4">WIN FINAL</Button>
-                     )}
-                  </div>
-
-                  <div className="text-cod-gold text-4xl font-black italic">VS</div>
-
-                  <div className="flex flex-col items-center gap-4">
-                     <div className={`w-56 h-32 flex items-center justify-center border-4 ${bracketState.semi2Winner ? bracketState.semi2Winner.color.replace('bg-', 'border-') + ' bg-black' : 'border-gray-800 bg-gray-900'} relative`}>
-                        {bracketState.semi2Winner ? (
-                           <span className="text-2xl font-black uppercase text-center text-white">{bracketState.semi2Winner.name}</span>
-                        ) : (
-                           <span className="text-gray-600 font-mono">TBD</span>
-                        )}
-                     </div>
-                     {bracketState.semi2Winner && (
-                        <Button onClick={() => advanceTeam(bracketState.semi2Winner!, 'final')} className="text-xs py-1 px-4">WIN FINAL</Button>
-                     )}
-                  </div>
-               </div>
-             </>
-           )}
-
-           {/* DUEL MODE (2 Teams - Best of 3) */}
-           {tournamentMode === 'DUEL' && teams.length === 2 && (
-             <div className="w-full max-w-4xl flex flex-col items-center">
-                <h2 className="text-4xl font-black text-white italic uppercase mb-12">BEST OF <span className="text-cod-gold">THREE</span></h2>
-                
-                <div className="flex justify-between w-full mb-12 items-center">
-                   {/* Team 1 */}
-                   <div className="flex flex-col items-center">
-                      <div className={`p-6 ${teams[0].color} w-64 text-center shadow-[0_0_20px_rgba(255,0,0,0.4)] relative`}>
-                          <h3 className="text-2xl font-black uppercase">{teams[0].name}</h3>
-                          <button onClick={() => showTeamInfo(teams[0])} className="absolute top-2 right-2 w-6 h-6 bg-black/50 rounded hover:bg-black text-xs">i</button>
-                      </div>
-                   </div>
-
-                   <div className="text-6xl font-black text-gray-700 italic">VS</div>
-
-                   {/* Team 2 */}
-                   <div className="flex flex-col items-center">
-                      <div className={`p-6 ${teams[1].color} w-64 text-center shadow-[0_0_20px_rgba(0,0,255,0.4)] relative`}>
-                          <h3 className="text-2xl font-black uppercase">{teams[1].name}</h3>
-                          <button onClick={() => showTeamInfo(teams[1])} className="absolute top-2 right-2 w-6 h-6 bg-black/50 rounded hover:bg-black text-xs">i</button>
-                      </div>
-                   </div>
-                </div>
-
-                {/* Match Slots */}
-                <div className="grid grid-cols-3 gap-8 w-full mb-8">
-                   {[1, 2, 3].map((matchNum) => {
-                      const matchKey = `match${matchNum}Winner` as 'match1Winner' | 'match2Winner' | 'match3Winner';
-                      const winnerId = bo3State[matchKey];
-                      const winnerTeam = teams.find(t => t.id === winnerId);
-                      
-                      return (
-                         <div key={matchNum} className="flex flex-col items-center bg-gray-900 border border-gray-700 p-4 rounded">
-                            <div className="text-gray-500 font-bold uppercase mb-4 tracking-widest">Match {matchNum}</div>
-                            <div className={`w-full h-24 mb-4 flex items-center justify-center border-2 ${winnerTeam ? winnerTeam.color.replace('bg-', 'border-') + ' bg-black' : 'border-gray-800'}`}>
-                               {winnerTeam ? (
-                                  <span className="font-black uppercase text-xl">{winnerTeam.name}</span>
-                               ) : (
-                                  <span className="text-gray-600 text-sm">PENDING</span>
-                               )}
-                            </div>
-                            {!bo3Champion && (
-                               <div className="flex gap-2 w-full">
-                                  <button onClick={() => recordBo3Win(matchKey, teams[0].id)} className={`flex-1 py-1 text-xs font-bold uppercase ${teams[0].color} hover:opacity-80`}>{teams[0].name}</button>
-                                  <button onClick={() => recordBo3Win(matchKey, teams[1].id)} className={`flex-1 py-1 text-xs font-bold uppercase ${teams[1].color} hover:opacity-80`}>{teams[1].name}</button>
-                               </div>
-                            )}
-                         </div>
-                      )
-                   })}
-                </div>
+  const renderBracket = () => {
+     // VS MODES (1v1)
+     if (tournamentMode === 'VS' || tournamentMode === 'VS_RANDOM') {
+         const isRandom = tournamentMode === 'VS_RANDOM';
+         const matches = isRandom ? rndVsMatches : vsMatches;
+         
+         if (!matches || matches.length === 0) return (
+             <div className="min-h-screen flex flex-col items-center justify-center">
+                 <div className="text-gray-400 mb-4">No bracket data found.</div>
+                 <Button onClick={() => setView(PageView.TOURNAMENT)}>Go Setup</Button>
              </div>
-           )}
+         );
 
-           {/* VS MODE (Dynamic Bracket) - Handles both VS and VS_RANDOM */}
-           {(tournamentMode === 'VS' || tournamentMode === 'VS_RANDOM') && (
-               <div className="flex flex-nowrap gap-8 overflow-x-auto p-4 w-full h-[80vh] items-center custom-scrollbar">
-                   {currentVsMatches.map((round, rIndex) => {
-                       const currentPlayIn = isRandomMode ? rndVsPlayInInfo : vsPlayInInfo;
-                       let roundTitle = `ROUND ${rIndex + 1}`;
-                       if (currentPlayIn.active) {
-                          if (rIndex === 0) roundTitle = "PLAY-IN / AJUSTE";
-                          else if (rIndex === currentVsMatches.length - 1) roundTitle = "GRAND FINAL";
-                          else roundTitle = `MAIN ROUND ${rIndex}`;
-                       } else {
-                          if (rIndex === currentVsMatches.length - 1) roundTitle = "GRAND FINAL";
-                       }
-                       const isPlayInRound = currentPlayIn.active && rIndex === 0;
+         return (
+             <div className="min-h-screen bg-black overflow-hidden flex flex-col">
+                 <div className="bg-gray-900 border-b border-gray-800 p-4 flex justify-between items-center shrink-0 z-10">
+                     <div>
+                        <h2 className="text-xl font-bold text-white uppercase">{isRandom ? 'Quick Play' : 'Ranked'} Bracket</h2>
+                        <span className="text-xs text-gray-500">1v1 Elimination</span>
+                     </div>
+                     <div className="flex gap-2">
+                        <Button variant="ghost" onClick={handleResetBracket}>Reset</Button>
+                        <Button onClick={() => setView(PageView.TOURNAMENT)}>Back</Button>
+                     </div>
+                 </div>
+                 
+                 <div className="flex-1 overflow-auto p-8 custom-scrollbar bg-dots-pattern">
+                     <div className="flex gap-16 min-w-max">
+                         {matches.map((round, rIndex) => (
+                             <div key={rIndex} className="flex flex-col justify-around gap-8 relative">
+                                 <div className="absolute -top-8 left-0 w-full text-center text-cod-gold font-bold text-xs uppercase tracking-widest">
+                                     {rIndex === matches.length - 1 ? 'Champion' : `Round ${rIndex + 1}`}
+                                 </div>
+                                 {round.map((match) => {
+                                     const p1Won = match.winner?.id === match.p1?.id;
+                                     const p2Won = match.winner?.id === match.p2?.id;
+                                     
+                                     // Champion Slot (Last Round, 1 match, winner determined)
+                                     if (rIndex === matches.length - 1 && match.winner) {
+                                          return (
+                                              <div key={match.id} className="w-64 h-32 bg-gradient-to-br from-yellow-600 to-yellow-400 rounded-xl shadow-[0_0_30px_rgba(234,179,8,0.6)] flex flex-col items-center justify-center animate-bounce-in border-2 border-white">
+                                                  <div className="text-black font-black uppercase tracking-widest text-sm mb-1">Champion</div>
+                                                  <img src={match.winner.image} className="w-16 h-16 rounded-full border-4 border-black mb-1 bg-black object-cover" alt=""/>
+                                                  <div className="text-black font-bold text-lg">{match.winner.name}</div>
+                                              </div>
+                                          )
+                                     }
 
-                       return (
-                           <div key={rIndex} className={`flex flex-col justify-around h-full min-w-[250px] ${isPlayInRound ? 'bg-orange-900/10 border-r border-orange-800 border-dashed pr-4' : ''}`}>
-                               <div className={`text-center font-bold mb-4 uppercase tracking-widest ${isPlayInRound ? 'text-orange-400' : 'text-blue-500'}`}>
-                                   {roundTitle}
-                               </div>
-                               {round.map((match, mIndex) => (
-                                   <div key={match.id} className="relative bg-cod-panel border border-gray-700 p-2 rounded mb-4">
-                                       <div className="text-xs text-gray-600 absolute -top-2 left-2 bg-black px-1">Match {match.matchIndex + 1}</div>
-                                       
-                                       {/* Player 1 */}
-                                       <div className={`flex items-center justify-between p-2 mb-1 border-b border-gray-800 ${match.winner && match.winner.id === match.p1?.id ? 'bg-green-900/30' : ''}`}>
-                                           <div className="flex items-center gap-2">
-                                               {match.p1 ? <img src={match.p1.image} className="w-6 h-6 rounded-full" /> : <div className="w-6 h-6 bg-gray-800 rounded-full"></div>}
-                                               <span className={`text-sm font-bold ${match.p1 ? 'text-white' : 'text-gray-600'}`}>
-                                                   {match.p1 ? match.p1.name : (isPlayInRound ? 'TBD' : 'WAITING...')}
-                                               </span>
-                                           </div>
-                                           {match.p1 && !match.winner && (match.p2 || !match.p2) && (
-                                                <button onClick={() => advanceVsMatch(rIndex, mIndex, match.p1!, isRandomMode)} className="text-[10px] bg-gray-700 hover:bg-orange-500 px-2 py-1 rounded text-white">WIN</button>
-                                           )}
-                                           {match.winner && match.winner.id === match.p1?.id && <span className="text-green-500">✓</span>}
-                                       </div>
+                                     return (
+                                     <div key={match.id} className="w-56 bg-gray-900 border border-gray-700 rounded relative group">
+                                         {/* P1 */}
+                                         <div 
+                                             onClick={() => { if(!match.winner && match.p1 && match.p2) advanceVsMatch(match.roundIndex, match.matchIndex, match.p1, isRandom) }}
+                                             className={`p-3 border-b border-gray-800 flex justify-between items-center transition-colors ${match.winner ? (p1Won ? 'bg-green-900/40' : 'bg-red-900/20 opacity-50') : 'hover:bg-gray-800 cursor-pointer'}`}
+                                         >
+                                             <span className={`text-sm font-bold ${p1Won ? 'text-green-400' : 'text-gray-300'}`}>
+                                                {match.p1 ? match.p1.name : 'TBD'}
+                                             </span>
+                                             {p1Won && <span className="text-xs text-green-500">🏆</span>}
+                                         </div>
+                                         
+                                         {/* P2 */}
+                                         <div 
+                                             onClick={() => { if(!match.winner && match.p1 && match.p2) advanceVsMatch(match.roundIndex, match.matchIndex, match.p2, isRandom) }}
+                                             className={`p-3 flex justify-between items-center transition-colors ${match.winner ? (p2Won ? 'bg-green-900/40' : 'bg-red-900/20 opacity-50') : 'hover:bg-gray-800 cursor-pointer'}`}
+                                         >
+                                             <span className={`text-sm font-bold ${p2Won ? 'text-green-400' : 'text-gray-300'}`}>
+                                                {match.p2 ? match.p2.name : 'TBD'}
+                                             </span>
+                                             {p2Won && <span className="text-xs text-green-500">🏆</span>}
+                                         </div>
 
-                                       {/* Player 2 */}
-                                       <div className={`flex items-center justify-between p-2 ${match.winner && match.winner.id === match.p2?.id ? 'bg-green-900/30' : ''}`}>
-                                           <div className="flex items-center gap-2">
-                                               {match.p2 ? <img src={match.p2.image} className="w-6 h-6 rounded-full" /> : <div className="w-6 h-6 bg-gray-800 rounded-full opacity-50"></div>}
-                                               <span className={`text-sm font-bold ${match.p2 ? 'text-white' : 'text-gray-600 italic'}`}>
-                                                   {match.p2 ? match.p2.name : (isPlayInRound ? 'TBD' : 'WAITING...')}
-                                               </span>
-                                           </div>
-                                           {match.p2 && !match.winner && match.p1 && (
-                                                <button onClick={() => advanceVsMatch(rIndex, mIndex, match.p2!, isRandomMode)} className="text-[10px] bg-gray-700 hover:bg-orange-500 px-2 py-1 rounded text-white">WIN</button>
-                                           )}
-                                            {match.winner && match.winner.id === match.p2?.id && <span className="text-green-500">✓</span>}
-                                       </div>
-                                   </div>
-                               ))}
-                           </div>
-                       )
-                   })}
-               </div>
-           )}
+                                         {/* Connector Line (Right) */}
+                                         {rIndex < matches.length - 1 && (
+                                            <div className="absolute top-1/2 -right-8 w-8 h-px bg-gray-700"></div>
+                                         )}
+                                     </div>
+                                 )})}
+                             </div>
+                         ))}
+                     </div>
+                 </div>
+             </div>
+         );
+     }
 
-           {/* CHAMPION DISPLAY */}
-           {(bracketState.champion || bo3Champion || vsChampion) && (
-              <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-30 animate-bounce-in pointer-events-none">
-                 <div className="bg-gradient-to-b from-yellow-300 to-yellow-600 p-8 rounded-xl shadow-[0_0_50px_rgba(255,215,0,0.8)] border-4 border-white text-center pointer-events-auto">
-                    <h2 className="text-2xl font-bold text-black uppercase mb-2">TOURNAMENT CHAMPION</h2>
-                    <h1 className="text-5xl font-black text-black uppercase">
-                        {bracketState.champion?.name || bo3Champion?.name || vsChampion?.name}
-                    </h1>
-                    <Button onClick={handleResetBracket} className="mt-4 bg-black text-white border border-white hover:bg-gray-900 text-sm">
-                        PLAY AGAIN
-                    </Button>
+     // STANDARD MODE (Teams)
+     if (tournamentMode === 'STANDARD') {
+        const t1 = teams.find(t => t.id === 't1');
+        const t2 = teams.find(t => t.id === 't2');
+        const t3 = teams.find(t => t.id === 't3');
+        const t4 = teams.find(t => t.id === 't4');
+        
+        if (!t1 || !t2 || !t3 || !t4) return <div>Loading...</div>;
+
+        return (
+           <div className="min-h-screen p-4 flex flex-col items-center bg-dots-pattern">
+              <div className="w-full max-w-6xl mb-6 flex justify-between items-center">
+                 <h2 className="text-3xl font-black italic text-white uppercase">Squad Tournament</h2>
+                 <div className="flex gap-2">
+                     <Button variant="ghost" onClick={handleResetBracket}>Reset</Button>
+                     <Button onClick={() => setView(PageView.TOURNAMENT)}>Back</Button>
                  </div>
               </div>
-           )}
-        </div>
-      </div>
-    );
+
+              <div className="w-full max-w-6xl grid grid-cols-3 gap-8 items-center h-[600px]">
+                 {/* SEMI 1 */}
+                 <div className="flex flex-col gap-12 justify-center h-full">
+                    <div className="bg-cod-panel border border-red-500 p-4 relative">
+                        <div className="absolute -top-3 left-4 bg-red-600 px-2 text-xs font-bold uppercase text-white">Semi-Final 1</div>
+                        {/* Team 1 Card */}
+                        <div className={`p-4 border-b border-gray-700 ${bracketState.semi1Winner?.id === t1.id ? 'bg-green-900/30' : ''}`}>
+                           <div className="font-bold text-xl text-red-500 mb-2">{t1.name}</div>
+                           <div className="text-xs text-gray-400 mb-2">{t1.members.map(m => m.name).join(', ')}</div>
+                           <Button onClick={() => advanceTeam(t1, 'semi1')} fullWidth className="text-xs py-1 h-8" disabled={!!bracketState.semi1Winner}>Win</Button>
+                        </div>
+                        {/* VS */}
+                        <div className="text-center font-black italic text-gray-600 py-2">VS</div>
+                        {/* Team 2 Card */}
+                        <div className={`p-4 border-t border-gray-700 ${bracketState.semi1Winner?.id === t2.id ? 'bg-green-900/30' : ''}`}>
+                           <div className="font-bold text-xl text-green-500 mb-2">{t2.name}</div>
+                           <div className="text-xs text-gray-400 mb-2">{t2.members.map(m => m.name).join(', ')}</div>
+                           <Button onClick={() => advanceTeam(t2, 'semi1')} fullWidth className="text-xs py-1 h-8" disabled={!!bracketState.semi1Winner}>Win</Button>
+                        </div>
+                    </div>
+
+                    <div className="bg-cod-panel border border-yellow-500 p-4 relative">
+                        <div className="absolute -top-3 left-4 bg-yellow-600 px-2 text-xs font-bold uppercase text-black">Semi-Final 2</div>
+                         {/* Team 3 Card */}
+                        <div className={`p-4 border-b border-gray-700 ${bracketState.semi2Winner?.id === t3.id ? 'bg-green-900/30' : ''}`}>
+                           <div className="font-bold text-xl text-yellow-500 mb-2">{t3.name}</div>
+                           <div className="text-xs text-gray-400 mb-2">{t3.members.map(m => m.name).join(', ')}</div>
+                           <Button onClick={() => advanceTeam(t3, 'semi2')} fullWidth className="text-xs py-1 h-8" disabled={!!bracketState.semi2Winner}>Win</Button>
+                        </div>
+                        {/* VS */}
+                        <div className="text-center font-black italic text-gray-600 py-2">VS</div>
+                        {/* Team 4 Card */}
+                        <div className={`p-4 border-t border-gray-700 ${bracketState.semi2Winner?.id === t4.id ? 'bg-green-900/30' : ''}`}>
+                           <div className="font-bold text-xl text-blue-500 mb-2">{t4.name}</div>
+                           <div className="text-xs text-gray-400 mb-2">{t4.members.map(m => m.name).join(', ')}</div>
+                           <Button onClick={() => advanceTeam(t4, 'semi2')} fullWidth className="text-xs py-1 h-8" disabled={!!bracketState.semi2Winner}>Win</Button>
+                        </div>
+                    </div>
+                 </div>
+
+                 {/* FINAL */}
+                 <div className="flex flex-col justify-center items-center h-full">
+                     <div className="w-1 h-32 bg-gray-700 mb-4"></div>
+                     <div className="bg-cod-panel border-2 border-white p-6 w-full relative shadow-[0_0_50px_rgba(255,255,255,0.1)]">
+                        <div className="absolute -top-4 left-1/2 transform -translate-x-1/2 bg-white text-black px-4 py-1 font-black uppercase text-sm tracking-widest">Grand Final</div>
+                        
+                        {/* Finalist 1 */}
+                         <div className={`p-4 text-center mb-4 border border-gray-700 ${bracketState.semi1Winner ? 'opacity-100' : 'opacity-30'}`}>
+                             <div className="text-2xl font-black text-white">{bracketState.semi1Winner?.name || 'TBD'}</div>
+                             {bracketState.semi1Winner && !bracketState.champion && (
+                                 <Button onClick={() => advanceTeam(bracketState.semi1Winner!, 'final')} className="mt-2 text-xs h-8 py-1">CROWN CHAMPION</Button>
+                             )}
+                         </div>
+
+                         <div className="text-center font-black text-2xl text-cod-gold mb-4">VS</div>
+
+                        {/* Finalist 2 */}
+                         <div className={`p-4 text-center border border-gray-700 ${bracketState.semi2Winner ? 'opacity-100' : 'opacity-30'}`}>
+                             <div className="text-2xl font-black text-white">{bracketState.semi2Winner?.name || 'TBD'}</div>
+                             {bracketState.semi2Winner && !bracketState.champion && (
+                                 <Button onClick={() => advanceTeam(bracketState.semi2Winner!, 'final')} className="mt-2 text-xs h-8 py-1">CROWN CHAMPION</Button>
+                             )}
+                         </div>
+                     </div>
+                     <div className="w-1 h-32 bg-gray-700 mt-4"></div>
+                 </div>
+
+                 {/* CHAMPION */}
+                 <div className="flex flex-col justify-center items-center h-full">
+                     {bracketState.champion ? (
+                         <div className="text-center animate-bounce-in">
+                             <div className="text-6xl mb-4">🏆</div>
+                             <div className="text-cod-gold font-black text-4xl uppercase tracking-tighter mb-2">{bracketState.champion.name}</div>
+                             <div className="text-white text-sm uppercase tracking-widest mb-6">Tournament Champions</div>
+                             <div className="grid grid-cols-5 gap-2">
+                                 {bracketState.champion.members.map(m => (
+                                     <div key={m.id} className="w-16 h-16 rounded-full border-2 border-cod-gold overflow-hidden bg-black">
+                                         <img src={m.image} alt="" className="w-full h-full object-cover"/>
+                                     </div>
+                                 ))}
+                             </div>
+                         </div>
+                     ) : (
+                         <div className="text-gray-600 font-black text-6xl opacity-20 uppercase">Champion</div>
+                     )}
+                 </div>
+              </div>
+           </div>
+        );
+     }
+
+     // DUEL MODE (Bo3)
+     if (tournamentMode === 'DUEL') {
+        const t1 = teams[0];
+        const t2 = teams[1];
+        if(!t1 || !t2) return <div>Loading...</div>;
+
+        const champion = getBo3Champion();
+
+        return (
+           <div className="min-h-screen p-4 flex flex-col items-center bg-dots-pattern">
+              <div className="w-full max-w-5xl mb-8 flex justify-between items-center">
+                 <h2 className="text-3xl font-black italic text-white uppercase">Duel (Best of 3)</h2>
+                 <div className="flex gap-2">
+                     <Button variant="ghost" onClick={handleResetBracket}>Reset</Button>
+                     <Button onClick={() => setView(PageView.TOURNAMENT)}>Back</Button>
+                 </div>
+              </div>
+
+              {/* TEAMS HEADER */}
+              <div className="grid grid-cols-2 gap-20 w-full max-w-5xl mb-12">
+                   <div className="bg-cod-panel border-t-4 border-red-600 p-6 text-center">
+                       <h3 className="text-3xl font-black text-red-500 uppercase mb-4">{t1.name}</h3>
+                       <div className="flex justify-center -space-x-4">
+                           {t1.members.map(m => (
+                               <div key={m.id} className="w-12 h-12 rounded-full border-2 border-black bg-gray-800 overflow-hidden relative z-0 hover:z-10 hover:scale-110 transition-transform">
+                                   <img src={m.image} className="w-full h-full object-cover" alt={m.name} />
+                               </div>
+                           ))}
+                       </div>
+                   </div>
+                   <div className="bg-cod-panel border-t-4 border-blue-600 p-6 text-center">
+                       <h3 className="text-3xl font-black text-blue-500 uppercase mb-4">{t2.name}</h3>
+                       <div className="flex justify-center -space-x-4">
+                           {t2.members.map(m => (
+                               <div key={m.id} className="w-12 h-12 rounded-full border-2 border-black bg-gray-800 overflow-hidden relative z-0 hover:z-10 hover:scale-110 transition-transform">
+                                   <img src={m.image} className="w-full h-full object-cover" alt={m.name} />
+                               </div>
+                           ))}
+                       </div>
+                   </div>
+              </div>
+
+              {/* MATCHES */}
+              <div className="flex gap-8 items-center justify-center w-full max-w-6xl">
+                  {/* MATCH 1 */}
+                  <div className={`w-64 bg-gray-900 border ${bo3State.match1Winner ? 'border-green-500' : 'border-gray-700'} p-4 flex flex-col items-center relative`}>
+                      <div className="absolute -top-3 bg-gray-800 px-3 text-xs font-bold uppercase border border-gray-600">Match 1</div>
+                      <div className="mt-4 w-full space-y-2">
+                          <button onClick={() => recordBo3Win('match1Winner', t1.id)} className={`w-full p-2 text-left font-bold border ${bo3State.match1Winner === t1.id ? 'bg-red-900/50 border-red-500 text-white' : 'border-gray-700 text-gray-500 hover:border-red-500'}`}>
+                              {t1.name}
+                          </button>
+                          <button onClick={() => recordBo3Win('match1Winner', t2.id)} className={`w-full p-2 text-left font-bold border ${bo3State.match1Winner === t2.id ? 'bg-blue-900/50 border-blue-500 text-white' : 'border-gray-700 text-gray-500 hover:border-blue-500'}`}>
+                              {t2.name}
+                          </button>
+                      </div>
+                  </div>
+
+                  {/* MATCH 2 */}
+                  <div className={`w-64 bg-gray-900 border ${bo3State.match2Winner ? 'border-green-500' : 'border-gray-700'} p-4 flex flex-col items-center relative`}>
+                      <div className="absolute -top-3 bg-gray-800 px-3 text-xs font-bold uppercase border border-gray-600">Match 2</div>
+                      <div className="mt-4 w-full space-y-2">
+                          <button onClick={() => recordBo3Win('match2Winner', t1.id)} className={`w-full p-2 text-left font-bold border ${bo3State.match2Winner === t1.id ? 'bg-red-900/50 border-red-500 text-white' : 'border-gray-700 text-gray-500 hover:border-red-500'}`}>
+                              {t1.name}
+                          </button>
+                          <button onClick={() => recordBo3Win('match2Winner', t2.id)} className={`w-full p-2 text-left font-bold border ${bo3State.match2Winner === t2.id ? 'bg-blue-900/50 border-blue-500 text-white' : 'border-gray-700 text-gray-500 hover:border-blue-500'}`}>
+                              {t2.name}
+                          </button>
+                      </div>
+                  </div>
+
+                  {/* MATCH 3 */}
+                  <div className={`w-64 bg-gray-900 border ${bo3State.match3Winner ? 'border-green-500' : 'border-gray-700'} p-4 flex flex-col items-center relative ${champion ? 'opacity-50 grayscale' : ''}`}>
+                      <div className="absolute -top-3 bg-gray-800 px-3 text-xs font-bold uppercase border border-gray-600">Match 3 (If Needed)</div>
+                      <div className="mt-4 w-full space-y-2">
+                          <button onClick={() => recordBo3Win('match3Winner', t1.id)} className={`w-full p-2 text-left font-bold border ${bo3State.match3Winner === t1.id ? 'bg-red-900/50 border-red-500 text-white' : 'border-gray-700 text-gray-500 hover:border-red-500'}`}>
+                              {t1.name}
+                          </button>
+                          <button onClick={() => recordBo3Win('match3Winner', t2.id)} className={`w-full p-2 text-left font-bold border ${bo3State.match3Winner === t2.id ? 'bg-blue-900/50 border-blue-500 text-white' : 'border-gray-700 text-gray-500 hover:border-blue-500'}`}>
+                              {t2.name}
+                          </button>
+                      </div>
+                  </div>
+              </div>
+
+              {champion && (
+                  <div className="mt-12 text-center animate-slide-in">
+                      <div className="text-cod-gold font-black text-2xl uppercase tracking-widest mb-2">Winner Detected</div>
+                      <div className="text-6xl font-black text-white drop-shadow-[0_0_15px_rgba(255,255,255,0.5)]">{champion.name}</div>
+                  </div>
+              )}
+           </div>
+        );
+     }
+     
+     return null;
   };
 
   return (
     <div className="min-h-screen text-white font-sans selection:bg-yellow-500 selection:text-black">
+      {/* ERROR PANEL FIXED TOP */}
+      {errorMessage && (
+        <div style={{
+          position: 'fixed',
+          top: '10px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 9999,
+          backgroundColor: "#8b0000",
+          color: "white",
+          padding: "12px",
+          borderRadius: "6px",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          minWidth: "300px",
+          maxWidth: "90%",
+          boxShadow: "0 4px 6px rgba(0,0,0,0.3)"
+        }}>
+          <span style={{ fontWeight: 500 }}>Error: {errorMessage}</span>
+          <button
+            onClick={() => setErrorMessage(null)}
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "white",
+              fontWeight: "bold",
+              cursor: "pointer",
+              marginLeft: "15px",
+              fontSize: "16px"
+            }}
+          >X</button>
+        </div>
+      )}
+
       {message && (
-        <div className={`fixed top-4 left-1/2 transform -translate-x-1/2 z-50 px-6 py-3 rounded shadow-lg font-bold border-2 animate-bounce-in ${message.type === 'success' ? 'bg-green-900 border-green-500 text-white' : message.type === 'error' ? 'bg-red-900 border-red-500 text-white' : 'bg-blue-900 border-blue-500'}`}>
+        <div className={`fixed top-16 left-1/2 transform -translate-x-1/2 z-50 px-6 py-3 rounded shadow-lg font-bold border-2 animate-bounce-in ${message.type === 'success' ? 'bg-green-900 border-green-500 text-white' : message.type === 'error' ? 'bg-red-900 border-red-500 text-white' : 'bg-blue-900 border-blue-500'}`}>
            {message.text}
            <button onClick={() => setMessage(null)} className="ml-4 text-sm opacity-70 hover:opacity-100">✕</button>
         </div>
