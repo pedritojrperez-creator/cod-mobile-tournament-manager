@@ -33,7 +33,7 @@ export const sendMessageToAssistant = async (
 export const quickAnalyzeText = async (text: string): Promise<string> => {
   try {
     // Initializing inside the function to ensure the latest API key is used.
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const apiKey = process.env.GEMINI_API_KEY ?? '';
     const response = await ai.models.generateContent({
       model: 'gemini-flash-lite-latest',
       contents: `Analyze this player name/UID for appropriateness in a tournament: ${text}. Return JSON with valid: boolean and reason: string.`,
