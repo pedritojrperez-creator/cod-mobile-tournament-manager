@@ -2,10 +2,6 @@
 import { GoogleGenAI, GenerateContentResponse, Type } from "@google/genai";
 import { ImageSize } from "../types";
 
-const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-// In a real app, we check if key exists. For this demo, we assume the environment injects it.
-const ai = new GoogleGenAI({ apiKey });
-
 /**
  * Chat with the AI Assistant
  */
@@ -14,9 +10,10 @@ export const sendMessageToAssistant = async (
   newMessage: string
 ): Promise<string> => {
   try {
+    // Initializing inside the function to ensure the latest API key is used as per guidelines.
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const chat = ai.chats.create({
       model: 'gemini-3-pro-preview',
-      messages: history,
       config: {
         systemInstruction: "You are a tactical assistant for a Call of Duty Mobile tournament manager. Be concise, use gamer terminology (OP, buff, nerf, camper, rush), and be helpful with tournament logistics.",
       },
@@ -35,10 +32,22 @@ export const sendMessageToAssistant = async (
  */
 export const quickAnalyzeText = async (text: string): Promise<string> => {
   try {
+    // Initializing inside the function to ensure the latest API key is used.
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-lite-preview-02-04',
+      model: 'gemini-flash-lite-latest',
       contents: `Analyze this player name/UID for appropriateness in a tournament: ${text}. Return JSON with valid: boolean and reason: string.`,
-      config: { responseMimeType: 'application/json' }
+      config: { 
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            valid: { type: Type.BOOLEAN },
+            reason: { type: Type.STRING }
+          },
+          required: ['valid', 'reason']
+        }
+      }
     });
     return response.text || "{}";
   } catch (error) {
@@ -52,6 +61,8 @@ export const quickAnalyzeText = async (text: string): Promise<string> => {
  */
 export const analyzePlayerImage = async (base64Data: string): Promise<string> => {
   try {
+    // Initializing inside the function to ensure the latest API key is used.
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
       contents: {
@@ -73,16 +84,8 @@ export const analyzePlayerImage = async (base64Data: string): Promise<string> =>
  */
 export const generateAvatar = async (prompt: string, size: ImageSize): Promise<string | null> => {
   try {
-    // Note: In a real browser environment requiring user-selected keys for Veo/Pro Image, 
-    // we would handle the key selection flow. Assuming env key is valid for this demo structure.
-    
-    // The prompt expects the model to generate an image.
-    // We use generateContent with tools or direct image generation depending on updated SDK specifics.
-    // Based on guidelines, we use generateContent for nano banana series models, checking parts.
-    
-    // However, guidelines say: "Upgrade to gemini-3-pro-image-preview if the user requests high-quality images".
-    // And "Call generateContent to generate images with nano banana series models".
-    
+    // Initializing inside the function to ensure the latest API key is used.
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-image-preview',
       contents: {
@@ -90,7 +93,7 @@ export const generateAvatar = async (prompt: string, size: ImageSize): Promise<s
       },
       config: {
         imageConfig: {
-          imageSize: size,
+          imageSize: size as any,
           aspectRatio: "1:1"
         }
       }
@@ -113,9 +116,9 @@ export const generateAvatar = async (prompt: string, size: ImageSize): Promise<s
  */
 export const editPlayerImage = async (base64Image: string, prompt: string): Promise<string | null> => {
   try {
-    // Remove header if present for raw base64
     const cleanBase64 = base64Image.replace(/^data:image\/(png|jpeg|jpg);base64,/, "");
-
+    // Initializing inside the function to ensure the latest API key is used.
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash-image',
       contents: {
@@ -152,31 +155,21 @@ export const editPlayerImage = async (base64Image: string, prompt: string): Prom
 export const analyzeMatchScreenshot = async (base64Image: string): Promise<any[]> => {
     try {
         const cleanBase64 = base64Image.replace(/^data:image\/(png|jpeg|jpg);base64,/, "");
-
+        // Initializing inside the function to ensure the latest API key is used.
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const prompt = `
         Analyze this Call of Duty Mobile match result scoreboard image strictly.
         
         Rules for Extraction:
-        1. Identify the match score (e.g., 5-2). The team with 5 rounds won is the WINNER. The other team is the LOSER.
+        1. Identify the match score. The team with more rounds won is the WINNER.
         2. Extract each player row visible.
-        3. For "kills", look for the first number in the K/D/A format (Bajas/Muertes/Asistencias).
-        4. MVP Rule: The player at the very top of the Winning team list is the Winning MVP. The player at the very top of the Losing team list is the Losing MVP.
+        3. For "kills", look for the first number in the K/D/A format.
+        4. MVP Rule: The player at the top of their team's list.
         5. Return a JSON array.
-
-        If a value is not clearly visible, use null or "Not detected". Do not invent data.
-
-        Response Schema:
-        Array of Objects:
-        {
-            "extractedName": string,
-            "teamResult": "WIN" or "LOSS",
-            "kills": number,
-            "isMvp": boolean
-        }
         `;
 
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: 'gemini-flash-latest',
             contents: {
                 parts: [
                     { inlineData: { data: cleanBase64, mimeType: 'image/jpeg' } },
@@ -191,10 +184,11 @@ export const analyzeMatchScreenshot = async (base64Image: string): Promise<any[]
                         type: Type.OBJECT,
                         properties: {
                             extractedName: { type: Type.STRING },
-                            teamResult: { type: Type.STRING, enum: ['WIN', 'LOSS'] },
+                            teamResult: { type: Type.STRING },
                             kills: { type: Type.INTEGER },
                             isMvp: { type: Type.BOOLEAN }
-                        }
+                        },
+                        required: ['extractedName', 'teamResult', 'kills', 'isMvp']
                     }
                 }
             }
